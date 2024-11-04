@@ -1,21 +1,44 @@
 import os
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import subprocess
 import threading
 import platform
 import time
 import re
+import json
 
 # Get the current working directory
 current_dir = os.getcwd()
+download_folder = "yt-dlp_Download"
+download_path = os.path.join(current_dir, download_folder)
+
+# Create the download directory if it doesn't exist
+if not os.path.exists(download_path):
+    os.makedirs(download_path)
 
 # Define paths to yt-dlp and aria2c
 yt_dlp_path = os.path.join(current_dir, 'yt-dlp.exe')
 aria2c_path = os.path.join(current_dir, 'aria2c.exe')
 
+# Config file path
+config_file_path = os.path.join(current_dir, 'config.json')
+
+def load_config():
+    """Load the download path from the config file if it exists."""
+    if os.path.exists(config_file_path):
+        with open(config_file_path, 'r') as file:
+            config = json.load(file)
+            return config.get('download_path', download_path)
+    return download_path
+
+def save_config(download_path):
+    """Save the download path to the config file."""
+    with open(config_file_path, 'w') as file:
+        json.dump({'download_path': download_path}, file)
+
 # Default download path
-default_download_path = "F:\\New_download"
+default_download_path = load_config()
 
 def validate_url(url):
     """Validate if the URL starts with 'http://', 'https://', or 'www.'."""
@@ -44,11 +67,9 @@ def generate_command():
         command = (
             f'"{yt_dlp_path}" -P "{download_path}" '
             f'-f "ba/b" -x --audio-format wav '
-#            f'-S "acodec:%%acodec%%" '
             f'--external-downloader "{aria2c_path}" '
             f'--playlist-start {start_number} '
             f'-o "%(title)s.%(ext)s" "{video_url}"'
-            
         )
     else:
         command = (
@@ -110,8 +131,8 @@ def update_timer(start_time):
         time.sleep(1)  # Wait for 1 second before updating the timer again
 
 def open_default_path():
+    """Open the folder in the file explorer."""
     try:
-        download_path = download_path_entry.get().strip()  # Get the current download path
         if platform.system() == "Windows":
             os.startfile(download_path)
         elif platform.system() == "Darwin":  # macOS
@@ -129,17 +150,63 @@ def toggle_entry():
     else:
         start_entry.config(state='normal')
 
+def change_download_path():
+    """Change the download path and save it to the config."""
+    new_path = download_path_entry.get().strip()
+    if os.path.exists(new_path):
+        save_config(new_path)
+        messagebox.showinfo("Success", "Download path updated!")
+    else:
+        messagebox.showerror("Error", "The specified path does not exist.")
+
+def reset_to_default_path():
+    """Reset the download path to the default."""
+    download_path_entry.config(state=tk.NORMAL)  # Temporarily enable the entry for updating
+    download_path_entry.delete(0, tk.END)
+    download_path_entry.insert(0, default_download_path)
+    download_path_entry.config(state="readonly")  # Set back to read-only (but selectable)
+    save_config(default_download_path)  # Automatically save the default path
+#    messagebox.showinfo("Reset", "Download path reset to default.")
+
+def choose_folder():
+    """Open a file dialog to choose a folder."""
+    selected_folder = filedialog.askdirectory(initialdir=default_download_path)
+    if selected_folder:
+        download_path_entry.config(state=tk.NORMAL)  # Temporarily enable the entry for updating
+        download_path_entry.delete(0, tk.END)
+        download_path_entry.insert(0, selected_folder)
+        download_path_entry.config(state="readonly")  # Set back to read-only (but selectable)
+        save_config(selected_folder)  # Automatically save the new path
+
 # Set up the main application window
 root = tk.Tk()
 root.title("yt-dlp Command Generator")
 
-# Create and place the download path input field
-tk.Label(root, text="Default Download Path:").pack(pady=5)
-download_path_entry = tk.Entry(root, width=50)
-download_path_entry.pack(pady=5)
-download_path_entry.insert(0, default_download_path)  # Set the default path
+# Create and place the download path input field with button
+path_frame = tk.Frame(root)
+path_frame.pack(pady=5)
 
-# Create and place the button to open the default path
+download_path_entry = tk.Entry(path_frame, width=50)
+download_path_entry.pack(side=tk.LEFT, padx=(0, 5))
+download_path_entry.insert(0, default_download_path)  # Set the default path
+download_path_entry.config(state="readonly")  # Make it read-only but selectable
+
+choose_folder_button = tk.Button(path_frame, text="Choose Download Folder", command=choose_folder)
+choose_folder_button.pack(side=tk.LEFT)
+
+# Create a frame for the reset and change path buttons
+button_frame = tk.Frame(root)
+button_frame.pack(pady=10)
+
+# Create and place the reset button inside the frame
+reset_button = tk.Button(button_frame, text="Reset to Default Path", command=reset_to_default_path)
+reset_button.pack(side=tk.LEFT, padx=5)
+
+# Create and place the change path button inside the frame
+#change_path_button = tk.Button(button_frame, text="Change Download Path", command=change_download_path)
+#change_path_button.pack(side=tk.LEFT, padx=5)
+
+# Create and place the button to open the download folder
 open_path_button = tk.Button(root, text="Open Download Folder", command=open_default_path)
 open_path_button.pack(pady=10)
 
