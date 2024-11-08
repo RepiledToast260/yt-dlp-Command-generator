@@ -45,10 +45,19 @@ def validate_url(url):
     pattern = r'^(https?://|www\.).+'
     return re.match(pattern, url) is not None
 
+def validate_number(number):
+    """Check if the number is a valid positive integer."""
+    if number.strip() == "":
+        return False  # Empty input is not valid
+    if not number.isdigit():
+        return False  # Input must be a digit
+    return int(number) > 0  # Must be a positive integer
+
 def generate_command():
     video_url = url_entry.get().strip()
     download_path = download_path_entry.get().strip()
     start_number = start_entry.get().strip() if not start_checkbox_var.get() else "1"
+    end_number = end_entry.get().strip()
 
     if not video_url:
         messagebox.showerror("Error", "Please enter a video URL.")
@@ -62,13 +71,26 @@ def generate_command():
         messagebox.showerror("Error", "Please enter a download path.")
         return
 
-    # Check if the best audio option is selected
+    if not start_checkbox_var.get() and not validate_number(start_number):
+        messagebox.showerror("Error", "Please enter a valid starting number.")
+        return
+
+    if not end_checkbox_var.get() and not validate_number(end_number):
+        messagebox.showerror("Error", "Please enter a valid ending number.")
+        return
+
+    # Construct the command based on user selection
+    playlist_start_option = f'--playlist-start {start_number}' if not start_checkbox_var.get() and start_number else ""
+    playlist_end_option = f'--playlist-end {end_number}' if not end_checkbox_var.get() and end_number else ""
+    ext_downloader_option = f'--external-downloader "{aria2c_path}" ' if ext_downloader_var.get() else ""
+
     if best_audio_var.get():
         command = (
             f'"{yt_dlp_path}" -P "{download_path}" '
             f'-f "ba/b" -x --audio-format wav '
-            f'--external-downloader "{aria2c_path}" '
-            f'--playlist-start {start_number} '
+            f'{ext_downloader_option} '
+            f'{playlist_start_option} '
+            f'{playlist_end_option} '
             f'-o "%(title)s.%(ext)s" "{video_url}"'
         )
     else:
@@ -77,8 +99,9 @@ def generate_command():
             f'--embed-chapters --embed-metadata --embed-thumbnail '
             f'-f "bv+ba/b" --merge-output-format mp4 '
             f'-S "vcodec:%%vcodec%%" -S "acodec:%%acodec%%" '
-            f'--external-downloader "{aria2c_path}" '
-            f'--playlist-start {start_number} '
+            f'{ext_downloader_option} '
+            f'{playlist_start_option} '
+            f'{playlist_end_option} '
             f'-o "%(title)s.%(ext)s" "{video_url}"'
         )
 
@@ -150,6 +173,13 @@ def toggle_entry():
     else:
         start_entry.config(state='normal')
 
+def toggle_end_entry():
+    if end_checkbox_var.get():
+        end_entry.config(state='disabled')
+        end_entry.delete(0, tk.END)  # Clear the entry if checked
+    else:
+        end_entry.config(state='normal')
+
 def change_download_path():
     """Change the download path and save it to the config."""
     new_path = download_path_entry.get().strip()
@@ -166,7 +196,6 @@ def reset_to_default_path():
     download_path_entry.insert(0, default_download_path)
     download_path_entry.config(state="readonly")  # Set back to read-only (but selectable)
     save_config(default_download_path)  # Automatically save the default path
-#    messagebox.showinfo("Reset", "Download path reset to default.")
 
 def choose_folder():
     """Open a file dialog to choose a folder."""
@@ -202,13 +231,9 @@ button_frame.pack(pady=10)
 reset_button = tk.Button(button_frame, text="Reset to Default Path", command=reset_to_default_path)
 reset_button.pack(side=tk.LEFT, padx=5)
 
-# Create and place the change path button inside the frame
-#change_path_button = tk.Button(button_frame, text="Change Download Path", command=change_download_path)
-#change_path_button.pack(side=tk.LEFT, padx=5)
-
 # Create and place the button to open the download folder
 open_path_button = tk.Button(root, text="Open Download Folder", command=open_default_path)
-open_path_button.pack(pady=10)
+open_path_button.pack(pady=5)
 
 # Create and place the URL input field
 tk.Label(root, text="Enter Video URL:").pack(pady=5)
@@ -230,14 +255,35 @@ start_entry = tk.Entry(frame, width=5)
 start_entry.insert(0, "1")  # Default value
 start_entry.pack(side=tk.LEFT)
 
+# Create a frame for the checkbox and ending number
+end_frame = tk.Frame(root)
+end_frame.pack(pady=5)
+
+# Create and place the checkbox for ending number
+end_checkbox_var = tk.BooleanVar(value=True)  # Default to checked
+end_checkbox = tk.Checkbutton(end_frame, text="End playlist at last video", variable=end_checkbox_var, command=toggle_end_entry)
+end_checkbox.pack(side=tk.LEFT)
+
+# Create and place the entry for ending number
+tk.Label(end_frame, text="Ending Number:").pack(side=tk.LEFT, padx=(10, 0))
+end_entry = tk.Entry(end_frame, width=5)
+end_entry.insert(0, "")  # Default value empty
+end_entry.pack(side=tk.LEFT)
+end_entry.config(state='disabled')  # Initially disabled
+
+#ext_downloader
+ext_downloader_var = tk.BooleanVar(value=True)
+ext_downloader_checkbox = tk.Checkbutton(root, text="External downloader (ariac2)", variable=ext_downloader_var)
+ext_downloader_checkbox.pack(pady=5)
+
 # Create and place the checkbox for best audio option
 best_audio_var = tk.BooleanVar(value=False)
-best_audio_checkbox = tk.Checkbutton(root, text="Download Best Audio (MP3)", variable=best_audio_var)
+best_audio_checkbox = tk.Checkbutton(root, text="Audio Only (wav)", variable=best_audio_var)
 best_audio_checkbox.pack(pady=5)
 
 # Create and place the generate button
 generate_button = tk.Button(root, text="Generate Command", command=generate_command)
-generate_button.pack(pady=10)
+generate_button.pack(pady=5)
 
 # Create and place the result Text widget
 tk.Label(root, text="Command:").pack(pady=0)
@@ -253,15 +299,15 @@ output_text.config(state=tk.DISABLED)  # Make it read-only initially
 
 # Create and place the copy button
 copy_button = tk.Button(root, text="Copy to Clipboard", command=copy_to_clipboard)
-copy_button.pack(pady=10)
+copy_button.pack(pady=5)
 
 # Create and place the run button
 run_button = tk.Button(root, text="Run", command=run_command)
-run_button.pack(pady=10)
+run_button.pack(pady=5)
 
 # Create and place the status label
 status_label = tk.Label(root, text="", fg="blue")
-status_label.pack(pady=5)
+status_label.pack(pady=0)
 
 # Create and place the timer label
 timer_label = tk.Label(root, text="Elapsed Time: 0s", fg="green")
