@@ -7,6 +7,14 @@ import platform
 import time
 import re
 import json
+import queue
+
+# Constants
+YT_DLP_EXECUTABLE = 'yt-dlp.exe'
+ARIA2C_EXECUTABLE = 'aria2c.exe'
+CONFIG_FILE = 'config.json'
+URL_PATTERN = re.compile(r'^(https?://|www\.).+')
+FORMAT_CODE_PATTERN = re.compile(r'^\d{2,3} \+ \d{2,3}$')
 
 # Get the current working directory
 current_dir = os.getcwd()
@@ -14,15 +22,14 @@ download_folder = "yt-dlp_Download"
 download_path = os.path.join(current_dir, download_folder)
 
 # Create the download directory if it doesn't exist
-if not os.path.exists(download_path):
-    os.makedirs(download_path)
+os.makedirs(download_path, exist_ok=True)
 
 # Define paths to yt-dlp and aria2c
-yt_dlp_path = os.path.join(current_dir, 'yt-dlp.exe')
-aria2c_path = os.path.join(current_dir, 'aria2c.exe')
+yt_dlp_path = os.path.join(current_dir, YT_DLP_EXECUTABLE)
+aria2c_path = os.path.join(current_dir, ARIA2C_EXECUTABLE)
 
 # Config file path
-config_file_path = os.path.join(current_dir, 'config.json')
+config_file_path = os.path.join(current_dir, CONFIG_FILE)
 
 def load_config():
     """Load the download path from the config file if it exists."""
@@ -42,16 +49,23 @@ default_download_path = load_config()
 
 def validate_url(url):
     """Validate if the URL starts with 'http://', 'https://', or 'www.'."""
-    pattern = r'^(https?://|www\.).+'
-    return re.match(pattern, url) is not None
+    return URL_PATTERN.match(url) is not None
 
 def validate_number(number):
     """Check if the number is a valid positive integer."""
-    if number.strip() == "":
-        return False  # Empty input is not valid
-    if not number.isdigit():
-        return False  # Input must be a digit
-    return int(number) > 0  # Must be a positive integer
+    return number.isdigit() and int(number) > 0
+
+def validate_format_code(format_code):
+    """Validate the custom format code to ensure it matches the pattern 'NNN + NNN'."""
+    return FORMAT_CODE_PATTERN.match(format_code) is not None
+
+def append_text(widget, text, clear=False):
+    """Helper function to append text to a Text widget."""
+    widget.config(state=tk.NORMAL)
+    if clear:
+        widget.delete(1.0, tk.END)
+    widget.insert(tk.END, text)
+    widget.config(state=tk.DISABLED)
 
 def generate_command():
     video_url = url_entry.get().strip()
@@ -79,11 +93,23 @@ def generate_command():
         messagebox.showerror("Error", "Please enter a valid ending number.")
         return
 
-    # Construct the command based on user selection
-    playlist_start_option = f'--playlist-start {start_number}' if not start_checkbox_var.get() and start_number else ""
-    playlist_end_option = f'--playlist-end {end_number}' if not end_checkbox_var.get() and end_number else ""
+    custom_format_code = custom_format_entry.get().strip() if custom_format_var.get() else "bv+ba/b"
+
+    if custom_format_var.get() and not validate_format_code(custom_format_code):
+        messagebox.showerror("Error", "Invalid format code. Please use the format 'NNN + NNN'.")
+        return
+
+    # Construct command
+    playlist_start_option = f'--playlist-start {start_number}' if start_number else ""
+    playlist_end_option = f'--playlist-end {end_number}' if end_number else ""
     ext_downloader_option = f'--external-downloader "{aria2c_path}" ' if ext_downloader_var.get() else ""
 
+    command = construct_command(video_url, download_path, playlist_start_option, playlist_end_option, ext_downloader_option, custom_format_code)
+    
+    append_text(result_text, command, clear=True)
+
+def construct_command(video_url, download_path, playlist_start_option, playlist_end_option, ext_downloader_option, custom_format_code):
+    """Construct the yt-dlp command based on user input."""
     if best_audio_var.get():
         command = (
             f'"{yt_dlp_path}" -P "{download_path}" '
@@ -91,76 +117,74 @@ def generate_command():
             f'{ext_downloader_option} '
             f'{playlist_start_option} '
             f'{playlist_end_option} '
+#            f'{custom_format_code} '  # Include custom format if provided
             f'-o "%(title)s.%(ext)s" "{video_url}"'
         )
+
+    elif thumbnail_var.get():
+        command = (
+            f'"{yt_dlp_path}" -P "{download_path}" '
+            f'--write-thumbnail --skip-download --convert-thumbnails png '
+            f'{ext_downloader_option} '
+            f'{playlist_start_option} '
+            f'{playlist_end_option} '
+#            f'{custom_format_code} '  # Include custom format if provided
+            f'-o "%(title)s.%(ext)s" "{video_url}"'
+        )
+
     else:
         command = (
             f'"{yt_dlp_path}" -P "{download_path}" '
             f'--embed-chapters --embed-metadata --embed-thumbnail '
-            f'-f "bv+ba/b" --merge-output-format mp4 '
+            f'-f "{custom_format_code}" --merge-output-format mp4 '
             f'-S "vcodec:%%vcodec%%" -S "acodec:%%acodec%%" '
             f'{ext_downloader_option} '
             f'{playlist_start_option} '
             f'{playlist_end_option} '
+#            f'{custom_format_code} '  # Include custom format if provided
             f'-o "%(title)s.%(ext)s" "{video_url}"'
         )
-
-    result_text.config(state=tk.NORMAL)  # Enable editing to insert text
-    result_text.delete(1.0, tk.END)  # Clear previous content
-    result_text.insert(tk.END, command)  # Insert the generated command
-    result_text.config(state=tk.DISABLED)  # Make it read-only
+    return command
 
 def copy_to_clipboard():
-    command = result_text.get(1.0, tk.END).strip()  # Get the command from the Text widget
+    command = result_text.get(1.0, tk.END).strip()
     if command:
-        root.clipboard_clear()  # Clear the clipboard
-        root.clipboard_append(command)  # Append the command to the clipboard
+        root.clipboard_clear()
+        root.clipboard_append(command)
         messagebox.showinfo("Copied", "Command copied to clipboard!")
 
 def run_command():
-    command = result_text.get(1.0, tk.END).strip()  # Get the command from the Text widget
+    command = result_text.get(1.0, tk.END).strip()
     if command:
-        status_label.config(text="Running...")  # Update status
-        timer_label.config(text="Elapsed Time: 0s")  # Reset timer label
-        start_time = time.time()  # Start the timer
-        
-        # Start the real-time timer update
-        threading.Thread(target=update_timer, args=(start_time,)).start()
-        
-        # Run the command in a separate thread
-        threading.Thread(target=execute_command, args=(command, start_time)).start()
+        status_label.config(text="Running...")
+        start_time = time.time()
+        threading.Thread(target=update_timer, args=(start_time,), daemon=True).start()
+        threading.Thread(target=execute_command, args=(command, start_time), daemon=True).start()
 
 def execute_command(command, start_time):
     try:
-        # Run the shell command and capture output
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for stdout_line in iter(process.stdout.readline, ""):
-            output_text.config(state=tk.NORMAL)
-            output_text.insert(tk.END, stdout_line)  # Display command output
-            output_text.config(state=tk.DISABLED)
-            output_text.yview(tk.END)  # Scroll to the end
+            append_text(output_text, stdout_line)
         process.stdout.close()
         process.wait()
     finally:
-        # Once the command finishes, set the status to "Finished"
         status_label.config(text="Finished")
 
 def update_timer(start_time):
-    """Update the timer label every second with the elapsed time."""
     while status_label.cget("text") == "Running...":
         elapsed_time = time.time() - start_time
         minutes, seconds = divmod(int(elapsed_time), 60)
         timer_label.config(text=f"Elapsed Time: {minutes}m {seconds}s")
-        time.sleep(1)  # Wait for 1 second before updating the timer again
+        time.sleep(1)
 
 def open_default_path():
-    """Open the folder in the file explorer."""
     try:
         if platform.system() == "Windows":
             os.startfile(download_path)
-        elif platform.system() == "Darwin":  # macOS
+        elif platform.system() == "Darwin":
             subprocess.run(["open", download_path])
-        else:  # Linux and others
+        else:
             subprocess.run(["xdg-open", download_path])
     except Exception as e:
         messagebox.showerror("Error", f"Failed to open folder: {e}")
@@ -176,12 +200,11 @@ def toggle_entry():
 def toggle_end_entry():
     if end_checkbox_var.get():
         end_entry.config(state='disabled')
-        end_entry.delete(0, tk.END)  # Clear the entry if checked
+        end_entry.delete(0, tk.END)
     else:
         end_entry.config(state='normal')
 
 def change_download_path():
-    """Change the download path and save it to the config."""
     new_path = download_path_entry.get().strip()
     if os.path.exists(new_path):
         save_config(new_path)
@@ -190,22 +213,20 @@ def change_download_path():
         messagebox.showerror("Error", "The specified path does not exist.")
 
 def reset_to_default_path():
-    """Reset the download path to the default."""
-    download_path_entry.config(state=tk.NORMAL)  # Temporarily enable the entry for updating
+    download_path_entry.config(state=tk.NORMAL)
     download_path_entry.delete(0, tk.END)
     download_path_entry.insert(0, default_download_path)
-    download_path_entry.config(state="readonly")  # Set back to read-only (but selectable)
-    save_config(default_download_path)  # Automatically save the default path
+    download_path_entry.config(state="readonly")
+    save_config(default_download_path)
 
 def choose_folder():
-    """Open a file dialog to choose a folder."""
     selected_folder = filedialog.askdirectory(initialdir=default_download_path)
     if selected_folder:
-        download_path_entry.config(state=tk.NORMAL)  # Temporarily enable the entry for updating
+        download_path_entry.config(state=tk.NORMAL)
         download_path_entry.delete(0, tk.END)
         download_path_entry.insert(0, selected_folder)
-        download_path_entry.config(state="readonly")  # Set back to read-only (but selectable)
-        save_config(selected_folder)  # Automatically save the new path
+        download_path_entry.config(state="readonly")
+        save_config(selected_folder)
 
 # Set up the main application window
 root = tk.Tk()
@@ -271,15 +292,36 @@ end_entry.insert(0, "")  # Default value empty
 end_entry.pack(side=tk.LEFT)
 end_entry.config(state='disabled')  # Initially disabled
 
-#ext_downloader
+# External downloader checkbox
 ext_downloader_var = tk.BooleanVar(value=True)
-ext_downloader_checkbox = tk.Checkbutton(root, text="External downloader (ariac2)", variable=ext_downloader_var)
+ext_downloader_checkbox = tk.Checkbutton(root, text="External downloader (aria2c)", variable=ext_downloader_var)
 ext_downloader_checkbox.pack(pady=5)
 
 # Create and place the checkbox for best audio option
 best_audio_var = tk.BooleanVar(value=False)
 best_audio_checkbox = tk.Checkbutton(root, text="Audio Only (wav)", variable=best_audio_var)
 best_audio_checkbox.pack(pady=5)
+
+thumbnail_var = tk.BooleanVar(value=False)
+thumbnail_checkbox = tk.Checkbutton(root, text="thumbnail Only", variable=thumbnail_var)
+thumbnail_checkbox.pack(pady=5)
+
+# Custom format checkbox and entry
+custom_format_var = tk.BooleanVar(value=False)
+custom_format_checkbox = tk.Checkbutton(root, text="Use Custom Format", variable=custom_format_var)
+custom_format_checkbox.pack(pady=5)
+
+custom_format_entry = tk.Entry(root, width=30)
+custom_format_entry.pack(pady=5)
+custom_format_entry.config(state='disabled')  # Initially disabled
+
+def toggle_custom_format_entry():
+    if custom_format_var.get():
+        custom_format_entry.config(state='normal')  # Enable the entry if checked
+    else:
+        custom_format_entry.config(state='disabled')  # Disable if unchecked
+
+custom_format_checkbox.config(command=toggle_custom_format_entry)
 
 # Create and place the generate button
 generate_button = tk.Button(root, text="Generate Command", command=generate_command)
